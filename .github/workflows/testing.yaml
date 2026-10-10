@@ -1,8 +1,10 @@
 ---
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: 2025 The Linux Foundation
+# SPDX-FileCopyrightText: 2026 The Linux Foundation
 
-# Action test/validation workflow
+# Runs the unit tests, then exercises the action from this repository
+# through '$/': each output format, validation failure, and a matrix
+# built from the json output, which is how most callers consume it.
 name: "Test GitHub Action 🧪"
 
 # yamllint disable-line rule:truthy
@@ -20,13 +22,12 @@ concurrency:
 permissions: {}
 
 jobs:
-  ### Test the GitHub Action in this Repository ###
-  tests:
-    name: "Test local GitHub Action"
+  unit-tests:
+    name: "Unit tests"
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    timeout-minutes: 10 # Increase this timeout value as needed
+    timeout-minutes: 5
     steps:
       # Load the egress allow-list out-of-band from the
       # organisation's .github repository and publish it as
@@ -34,9 +35,8 @@ jobs:
       # yamllint disable-line rule:line-length
       - uses: lfreleng-actions/harden-runner-block-action@a32eb064a1188f6b0f15d2c0c0381efe54b0dd22  # v0.12.2
         with:
-          config: '@18d9c4446bea555d0783e850f6d295f844fe8f67'  # v0.1.1
+          config: '@93962991c9e4cc04d77d81e619475c868a226277'  # v0.17.0
 
-      # Harden the runner with the just-loaded allow-list.
       - name: 'Harden runner (block)'
         # yamllint disable-line rule:line-length
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
@@ -50,41 +50,144 @@ jobs:
         with:
           persist-credentials: false
 
-      # Perform setup prior to running test(s)
-      - name: "Testing setup step"
+      # The runner's own python3, as action.yaml uses: the suite needs
+      # nothing beyond the standard library.
+      - name: "Run unit tests"
         shell: bash
         run: |
-          # Testing setup step
-          echo "Testing setup step"
-          echo "Testing setup step/summary output" >> "$GITHUB_STEP_SUMMARY"
+          # Run unit tests
+          python3 -B -m unittest discover -s tests -v
 
-      - name: "Running local action: ${{ github.repository }}"
+  action-tests:
+    name: "Action tests"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    outputs:
+      json: ${{ steps.repositories.outputs.json }}
+    steps:
+      # yamllint disable-line rule:line-length
+      - uses: lfreleng-actions/harden-runner-block-action@a32eb064a1188f6b0f15d2c0c0381efe54b0dd22  # v0.12.2
+        with:
+          config: '@93962991c9e4cc04d77d81e619475c868a226277'  # v0.17.0
+
+      - name: 'Harden runner (block)'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
+        with:
+          egress-policy: 'block'
+          allowed-endpoints: >
+            ${{ env.CONNECTION_ALLOW_LIST }}
+
+      - name: "Checkout repository"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: "Split a repository list"
+        id: repositories
         uses: $/
         with:
-          input: "test input 💬"
+          list: |
+            repo-b, Repo-A repo-a
+            repo-b
+          validate: "repository"
 
-      - name: "Validated local action: ${{ github.repository }}"
+      - name: "Check the repository list outputs"
         shell: bash
         env:
-          REPO: ${{ github.repository }}
+          JSON: ${{ steps.repositories.outputs.json }}
+          CSV: ${{ steps.repositories.outputs.csv }}
+          LINES: ${{ steps.repositories.outputs.lines }}
+          COUNT: ${{ steps.repositories.outputs.count }}
+          FIRST: ${{ fromJSON(steps.repositories.outputs.json)[0] }}
         run: |
-          # Local action validation
-          echo "Validated local action: $REPO"
-          echo "Validation step summary output" >> "$GITHUB_STEP_SUMMARY"
+          # Check the repository list outputs
+          set -euo pipefail
+          [ "$JSON" = '["repo-b","Repo-A"]' ]
+          [ "$CSV" = 'repo-b,Repo-A' ]
+          [ "$LINES" = $'repo-b\nRepo-A' ]
+          [ "$COUNT" = '2' ]
+          [ "$FIRST" = 'repo-b' ]
 
-      # yamllint disable-line rule:line-length
-      - name: "Running local action: ${{ github.repository }} [Override Failure]"
+      - name: "Split a glob list without validation"
+        id: globs
         uses: $/
-        id: failure
-        continue-on-error: true
         with:
-          invalid_input: "Some garbage"
+          list: "*-workflows, *-Workflows"
 
-      # Failure testing is also important
-      - name: "Error if step above did NOT fail"
-        if: steps.failure.outcome == 'success'
+      - name: "Check the glob list outputs"
+        shell: bash
+        env:
+          JSON: ${{ steps.globs.outputs.json }}
+          COUNT: ${{ steps.globs.outputs.count }}
+        run: |
+          # Check the glob list outputs
+          set -euo pipefail
+          [ "$JSON" = '["*-workflows","*-Workflows"]' ]
+          [ "$COUNT" = '2' ]
+
+      - name: "Split a blank list"
+        id: blank
+        uses: $/
+        with:
+          list: " , "
+          validate: "repository"
+
+      - name: "Check the blank list outputs"
+        shell: bash
+        env:
+          JSON: ${{ steps.blank.outputs.json }}
+          CSV: ${{ steps.blank.outputs.csv }}
+          COUNT: ${{ steps.blank.outputs.count }}
+        run: |
+          # Check the blank list outputs
+          set -euo pipefail
+          [ "$JSON" = '[]' ]
+          [ "$CSV" = '' ]
+          [ "$COUNT" = '0' ]
+
+      - name: "Split an invalid repository list [expected failure]"
+        id: invalid
+        continue-on-error: true
+        uses: $/
+        with:
+          list: "lfreleng-actions/repo, bad!"
+          validate: "repository"
+
+      - name: "Error if the invalid list did NOT fail"
+        if: steps.invalid.outcome != 'failure'
         shell: bash
         run: |
-          # Error if step above did NOT fail
-          echo "Error: previous test step did NOT fail ❌"
+          # Error if the invalid list did NOT fail
+          echo "Error: an invalid repository list was accepted ❌"
           exit 1
+
+  matrix:
+    name: "Matrix (${{ matrix.repository }})"
+    needs: action-tests
+    runs-on: ubuntu-latest
+    permissions: {}
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        repository: ${{ fromJSON(needs.action-tests.outputs.json) }}
+    steps:
+      - name: 'Harden runner (block)'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
+        with:
+          egress-policy: 'block'
+
+      - name: "Check the matrix entry"
+        shell: bash
+        env:
+          REPOSITORY: ${{ matrix.repository }}
+        run: |
+          # Check the matrix entry
+          set -euo pipefail
+          case "$REPOSITORY" in
+            repo-b|Repo-A) echo "Matrix entry: $REPOSITORY ✅" ;;
+            *) echo "Error: unexpected matrix entry $REPOSITORY ❌"; exit 1 ;;
+          esac

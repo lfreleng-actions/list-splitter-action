@@ -195,6 +195,9 @@ repos:
     hooks:
       - id: write-good
         files: "\\.(rst|md|markdown|mdown|mkdn)$"
+        # tooWordy flags 'validate', the name of an action input, so
+        # the README cannot document the input without tripping it.
+        args: ["--no-tooWordy"]
 
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: a6564f5d57444e123433a5c9af733e3975c77229  # frozen: v0.11.0.1-1
