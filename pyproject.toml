@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 The Linux Foundation
+
+# Tool configuration only; this repository is not a Python package.
+
+[tool.basedpyright]
+# action.yaml runs the script with the runner's preinstalled python3.
+# 3.10 is the distro python3 on ubuntu-22.04, the oldest GitHub-hosted
+# Ubuntu image, so the code must not need anything newer.
+pythonVersion = "3.10"
+pythonPlatform = "All"
+typeCheckingMode = "standard"
+include = ["scripts", "tests"]
+# The tests import the script as a top-level module, as python3 does
+# when it puts the script's directory on sys.path.
+extraPaths = ["scripts"]
