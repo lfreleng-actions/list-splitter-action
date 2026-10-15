@@ -7,16 +7,33 @@ from __future__ import annotations
 
 import json
 import secrets
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+
+from . import tokens
+from .categories.base import Item
 
 
-def build_outputs(items: list[str]) -> dict[str, str]:
+def encode(value: object) -> str:
+    """Compact JSON, keeping non-ASCII characters readable."""
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def build_outputs(items: Sequence[Item]) -> dict[str, str]:
     """Render the items in each output format the action publishes."""
+    texts = [item.text for item in items]
+    # One entry per repository, which GitHub names without regard to case.
+    holders = tokens.dedupe(
+        (item for item in items if item.repo),
+        lambda item: item.repo,
+        ignore_case=True,
+    )
     return {
-        "json": json.dumps(items, ensure_ascii=False, separators=(",", ":")),
-        "csv": ",".join(items),
-        "lines": "\n".join(items),
-        "count": str(len(items)),
+        "json": encode(texts),
+        "csv": ",".join(texts),
+        "lines": "\n".join(texts),
+        "count": str(len(texts)),
+        "repositories": ",".join(item.repo for item in holders),
+        "details": encode([item.details for item in items]),
     }
 
 

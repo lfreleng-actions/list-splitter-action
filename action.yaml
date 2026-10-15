@@ -4,7 +4,8 @@
 
 # Splits a comma, space or newline separated list (typically a
 # workflow_dispatch input) into items, removes repeats, optionally
-# validates each item, and publishes the result as JSON, CSV, one
+# validates each item as a repository, issue, pull request,
+# organisation or user, and publishes the result as JSON, CSV, one
 # item per line, and a count. Needs python3 on the runner; it makes no
 # network calls and takes no token.
 name: "✂️ List Splitter"
@@ -17,13 +18,19 @@ inputs:
     required: false
     default: ""
   validate:
-    description: "Item check: none, or repository for bare repository names"
+    # yamllint disable-line rule:line-length
+    description: "Item check: none, repository, issue, pull-request, organisation or user"
     required: false
     default: "none"
   ignore-case:
     description: "Treat items differing in case as repeats: auto, true, false"
     required: false
     default: "auto"
+  owner:
+    # yamllint disable-line rule:line-length
+    description: "Owner that repositories, issues and pull requests belong to; blank uses the workflow's owner"
+    required: false
+    default: ""
 
 outputs:
   json:
@@ -38,6 +45,12 @@ outputs:
   count:
     description: "Number of items"
     value: ${{ steps.split.outputs.count }}
+  repositories:
+    description: "Distinct repositories the items name, joined by commas"
+    value: ${{ steps.split.outputs.repositories }}
+  details:
+    description: "JSON array describing each item, in the order of json"
+    value: ${{ steps.split.outputs.details }}
 
 runs:
   using: "composite"
@@ -49,6 +62,7 @@ runs:
         SPLIT_LIST: ${{ inputs.list }}
         SPLIT_VALIDATE: ${{ inputs.validate }}
         SPLIT_IGNORE_CASE: ${{ inputs.ignore-case }}
+        SPLIT_OWNER: ${{ inputs.owner }}
       run: |
         # Split list
         python3 -B "${GITHUB_ACTION_PATH}/scripts/split_list.py"

@@ -6,9 +6,11 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from typing import TypeVar
 
 SEPARATORS = re.compile(r"[,\s]+")
+Entry = TypeVar("Entry")
 
 
 def split(text: str) -> list[str]:
@@ -16,13 +18,15 @@ def split(text: str) -> list[str]:
     return [token for token in SEPARATORS.split(text) if token]
 
 
-def dedupe(tokens: Iterable[str], ignore_case: bool) -> list[str]:
-    """Keep the first occurrence of each token, in the order given."""
+def dedupe(
+    entries: Iterable[Entry], key: Callable[[Entry], str], ignore_case: bool
+) -> list[Entry]:
+    """Keep the first entry with each key, in the order given."""
     seen: set[str] = set()
-    kept: list[str] = []
-    for token in tokens:
-        key = token.casefold() if ignore_case else token
-        if key not in seen:
-            seen.add(key)
-            kept.append(token)
+    kept: list[Entry] = []
+    for entry in entries:
+        identity = key(entry).casefold() if ignore_case else key(entry)
+        if identity not in seen:
+            seen.add(identity)
+            kept.append(entry)
     return kept

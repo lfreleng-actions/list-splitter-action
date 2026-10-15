@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from .base import Category
+from .base import Category, Context, Item
 
 
 class AnyToken(Category):
@@ -14,6 +14,6 @@ class AnyToken(Category):
     names = ("none",)
     ignore_case = False
 
-    def parse(self, token: str) -> str:
+    def parse(self, token: str, context: Context) -> Item:
         """Return the token unchanged."""
-        return token
+        return Item(token)

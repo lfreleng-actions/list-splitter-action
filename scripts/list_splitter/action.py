@@ -11,26 +11,35 @@ re-run, and nothing is published.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import NamedTuple
 
 from . import tokens
-from .categories.base import InvalidItem
+from .categories.base import InvalidItem, Item
 from .inputs import InputError, Settings, read_settings
 from .outputs import build_outputs, report_error, write_outputs
 
 
-def collect(text: str, settings: Settings) -> tuple[list[str], list[tuple[str, str]]]:
-    """Split and deduplicate the list, then parse each token.
+class Failure(NamedTuple):
+    """A token that failed validation, and the reason why."""
 
-    Returns the items, and each refused token with the reason why.
+    token: str
+    reason: str
+
+
+def collect(text: str, settings: Settings) -> tuple[list[Item], list[Failure]]:
+    """Split and deduplicate the list, parse each token, then drop repeats.
+
+    Tokens naming one item, such as repo#1 and its URL, are repeats
+    too, so items compare once more by the form they publish.
     """
-    items: list[str] = []
-    failures: list[tuple[str, str]] = []
-    for token in tokens.dedupe(tokens.split(text), settings.ignore_case):
+    items: list[Item] = []
+    failures: list[Failure] = []
+    for token in tokens.dedupe(tokens.split(text), str, settings.ignore_case):
         try:
-            items.append(settings.category.parse(token))
+            items.append(settings.category.parse(token, settings.context))
         except InvalidItem as exc:
-            failures.append((token, str(exc)))
-    return items, failures
+            failures.append(Failure(token, str(exc)))
+    return tokens.dedupe(items, lambda item: item.text, settings.ignore_case), failures
 
 
 def main(environ: Mapping[str, str]) -> int:
@@ -45,8 +54,8 @@ def main(environ: Mapping[str, str]) -> int:
         return 1
 
     items, failures = collect(environ.get("SPLIT_LIST", ""), settings)
-    for token, reason in failures:
-        report_error(f"Invalid item '{token}': {reason}")
+    for failure in failures:
+        report_error(f"Invalid item '{failure.token}': {failure.reason}")
     if failures:
         return 1
 

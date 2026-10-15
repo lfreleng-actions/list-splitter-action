@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from list_splitter import action, outputs  # noqa: E402
+from list_splitter.categories.base import Item  # noqa: E402
 
 # The runner sets GITHUB_REPOSITORY_OWNER in every job.
 WORKFLOW_OWNER = "lfreleng-actions"
@@ -49,23 +50,47 @@ class OutputsTest(OutputFileTestCase):
     """Each output renders the same items, and the file cannot be forged."""
 
     def test_formats(self) -> None:
-        """json, csv, lines and count describe the same list."""
+        """Every output describes the same list."""
+        items = [
+            Item("o/a#1", owner="o", repo="a", number=1),
+            Item("o/b#2", owner="o", repo="b", number=2),
+        ]
         self.assertEqual(
-            outputs.build_outputs(["a", "b"]),
-            {"json": '["a","b"]', "csv": "a,b", "lines": "a\nb", "count": "2"},
+            outputs.build_outputs(items),
+            {
+                "json": '["o/a#1","o/b#2"]',
+                "csv": "o/a#1,o/b#2",
+                "lines": "o/a#1\no/b#2",
+                "count": "2",
+                "repositories": "a,b",
+                "details": '[{"item":"o/a#1","owner":"o","repo":"a","number":1},'
+                '{"item":"o/b#2","owner":"o","repo":"b","number":2}]',
+            },
         )
 
+    def test_repositories_are_named_once(self) -> None:
+        """Items in one repository, however spelt, name it once."""
+        items = [Item("r#1", repo="Repo"), Item("x"), Item("r#2", repo="repo")]
+        self.assertEqual(outputs.build_outputs(items)["repositories"], "Repo")
+
     def test_empty_list(self) -> None:
-        """No items gives an empty array and empty text outputs."""
+        """No items gives empty arrays and empty text outputs."""
         outputs.write_outputs(str(self.path), outputs.build_outputs([]))
         self.assertEqual(
             read_outputs(self.path),
-            {"json": "[]", "csv": "", "lines": "", "count": "0"},
+            {
+                "json": "[]",
+                "csv": "",
+                "lines": "",
+                "count": "0",
+                "repositories": "",
+                "details": "[]",
+            },
         )
 
     def test_values_round_trip(self) -> None:
         """Multi-line and non-ASCII values read back unchanged."""
-        rendered = outputs.build_outputs(["ä*", "b"])
+        rendered = outputs.build_outputs([Item("ä*"), Item("b")])
         outputs.write_outputs(str(self.path), rendered)
         self.assertEqual(read_outputs(self.path), rendered)
         self.assertEqual(json.loads(rendered["json"]), ["ä*", "b"])
@@ -111,7 +136,6 @@ class MainTest(OutputFileTestCase):
         )
         self.assertEqual(self.path.read_text(encoding="utf-8"), "")
 
-    @unittest.expectedFailure
     def test_repository_list(self) -> None:
         """Names split, collapse ignoring case, and keep their order."""
         status, log = self.run_main(
@@ -139,7 +163,6 @@ class MainTest(OutputFileTestCase):
         )
         self.assertEqual(log, 'Items (2): ["repo-b","Repo-A"]\n')
 
-    @unittest.expectedFailure
     def test_issue_spellings_collapse_to_one_reference(self) -> None:
         """Every spelling of an issue publishes as owner/repo#N, once."""
         status, _ = self.run_main(
@@ -172,7 +195,6 @@ class MainTest(OutputFileTestCase):
             },
         )
 
-    @unittest.expectedFailure
     def test_pull_requests_resolve_against_the_owner_input(self) -> None:
         """The owner input replaces the workflow's owner for short forms."""
         status, _ = self.run_main(
@@ -189,7 +211,6 @@ class MainTest(OutputFileTestCase):
         )
         self.assertEqual(found["repositories"], "repo,other")
 
-    @unittest.expectedFailure
     def test_invalid_references_are_each_reported(self) -> None:
         """Each refused reference gets the reason that fits it."""
         status, log = self.run_main(
@@ -215,7 +236,6 @@ class MainTest(OutputFileTestCase):
             ],
         )
 
-    @unittest.expectedFailure
     def test_issue_links_are_refused_as_pull_requests(self) -> None:
         """A link to an issue is not a pull request, whatever its number."""
         status, log = self.run_main(
@@ -233,7 +253,6 @@ class MainTest(OutputFileTestCase):
             ],
         )
 
-    @unittest.expectedFailure
     def test_accounts_are_logins_compared_without_case(self) -> None:
         """Organisations and users publish as given, once each."""
         for mode in ("organisation", "organization", "user"):
@@ -254,7 +273,6 @@ class MainTest(OutputFileTestCase):
                     ],
                 )
 
-    @unittest.expectedFailure
     def test_invalid_accounts_are_each_reported(self) -> None:
         """A login GitHub could not hold is refused, naming the kind."""
         long_name = "x" * 40
@@ -274,7 +292,6 @@ class MainTest(OutputFileTestCase):
             ],
         )
 
-    @unittest.expectedFailure
     def test_real_accounts_pass_whatever_the_signup_rules_say(self) -> None:
         """Accounts GitHub holds pass, though its signup form now refuses them.
 
@@ -293,7 +310,6 @@ class MainTest(OutputFileTestCase):
         self.assertEqual(status, 0)
         self.assertEqual(read_outputs(self.path)["json"], '["johan--/repo#1"]')
 
-    @unittest.expectedFailure
     def test_unvalidated_items_carry_bare_details(self) -> None:
         """With no validation, details name each item and nothing else."""
         status, _ = self.run_main(list="*-workflows owner/repo#1")
@@ -305,7 +321,6 @@ class MainTest(OutputFileTestCase):
             [{"item": "*-workflows"}, {"item": "owner/repo#1"}],
         )
 
-    @unittest.expectedFailure
     def test_owner_must_be_a_login(self) -> None:
         """An owner that cannot be an account fails before any item."""
         status, log = self.run_main(list="repo#1", validate="issue", owner="a b!")
@@ -314,7 +329,6 @@ class MainTest(OutputFileTestCase):
             log, "::error::owner must be an organisation or user name, not 'a b!'\n"
         )
 
-    @unittest.expectedFailure
     def test_owner_is_required_where_references_need_one(self) -> None:
         """With no owner input and no workflow owner, short forms cannot resolve."""
         self.runner["GITHUB_REPOSITORY_OWNER"] = ""
@@ -337,6 +351,22 @@ class MainTest(OutputFileTestCase):
         status, _ = self.run_main(list=" , ", validate="repository")
         self.assertEqual(status, 0)
         self.assertEqual(read_outputs(self.path)["count"], "0")
+
+    def test_repositories_need_no_owner(self) -> None:
+        """Without any owner, names publish as before, with none in details."""
+        self.runner["GITHUB_REPOSITORY_OWNER"] = ""
+        status, _ = self.run_main(list="repo-a", validate="repository")
+        self.assertEqual(status, 0)
+        self.assertEqual(
+            json.loads(read_outputs(self.path)["details"]),
+            [{"item": "repo-a", "repo": "repo-a"}],
+        )
+
+    def test_repeated_tokens_drop_before_validation(self) -> None:
+        """A token repeating an earlier one, ignoring case, is never checked."""
+        status, _ = self.run_main(list="k \u212a", validate="repository")
+        self.assertEqual(status, 0)
+        self.assertEqual(read_outputs(self.path)["json"], '["k"]')
 
     def test_every_invalid_item_is_reported_once(self) -> None:
         """All failures are named before the step fails; nothing is written."""

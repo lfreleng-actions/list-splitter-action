@@ -44,15 +44,23 @@ class DedupeTest(unittest.TestCase):
     def test_exact_comparison(self) -> None:
         """Without ignore-case, items differing in case are distinct."""
         self.assertEqual(
-            tokens.dedupe(["b", "A", "b", "a", "A"], ignore_case=False),
+            tokens.dedupe(["b", "A", "b", "a", "A"], str, ignore_case=False),
             ["b", "A", "a"],
         )
 
     def test_case_insensitive_comparison_keeps_first_spelling(self) -> None:
         """With ignore-case, the first spelling given survives."""
         self.assertEqual(
-            tokens.dedupe(["Repo", "other", "REPO", "repo"], ignore_case=True),
+            tokens.dedupe(["Repo", "other", "REPO", "repo"], str, ignore_case=True),
             ["Repo", "other"],
+        )
+
+    def test_the_key_decides_what_repeats(self) -> None:
+        """Entries repeat when their keys match, whatever else they hold."""
+        entries = [("x", 1), ("y", 2), ("X", 3), ("y", 4)]
+        self.assertEqual(
+            tokens.dedupe(entries, lambda entry: entry[0], ignore_case=True),
+            [("x", 1), ("y", 2)],
         )
 
 

@@ -3,20 +3,30 @@
 
 """The validate modes, each a category of item held in one registry.
 
-A category says what a valid item looks like and how GitHub compares
-items of its kind; base.Category sets out what each provides. To add
-a validate mode, write a Category in a module of this package and add
-an instance to CATEGORIES; the inputs and the error report read the
+A category turns a token into the item the outputs publish, or says
+why it cannot, and states how GitHub compares items of its kind;
+base.Category sets out what each provides. To add a validate mode,
+write a Category in a module of this package and add an instance to
+CATEGORIES; the inputs, the outputs and the error report read the
 registry, so nothing else needs to change.
 """
 
 from __future__ import annotations
 
+from .accounts import Organisation, User
 from .base import Category
+from .references import Issue, PullRequest
 from .repositories import Repository
 from .unchecked import AnyToken
 
-CATEGORIES: tuple[Category, ...] = (AnyToken(), Repository())
+CATEGORIES: tuple[Category, ...] = (
+    AnyToken(),
+    Repository(),
+    Issue(),
+    PullRequest(),
+    Organisation(),
+    User(),
+)
 REGISTRY: dict[str, Category] = {
     name: category for category in CATEGORIES for name in category.names
 }

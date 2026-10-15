@@ -9,7 +9,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from . import categories
-from .categories.base import Category
+from .categories.accounts import LOGIN
+from .categories.base import Category, Context
+
+# The runner sets GITHUB_SERVER_URL; this serves runs outside one.
+DEFAULT_SERVER_URL = "https://github.com"
 
 
 class InputError(Exception):
@@ -22,6 +26,7 @@ class Settings:
 
     category: Category
     ignore_case: bool
+    context: Context
 
 
 def resolve_category(value: str) -> Category:
@@ -43,8 +48,30 @@ def resolve_ignore_case(value: str, category: Category) -> bool:
     raise InputError(f"ignore-case must be auto, true or false, not {value!r}")
 
 
+def resolve_owner(value: str, workflow_owner: str, category: Category) -> str:
+    """Normalise the owner input; blank means the workflow's own owner.
+
+    Categories without owners ignore the input, and get blank; so does
+    one that can do without an owner when none is known.
+    """
+    if not category.has_owner:
+        return ""
+    owner = value.strip() or workflow_owner.strip()
+    if owner and not LOGIN.fullmatch(owner):
+        raise InputError(f"owner must be an organisation or user name, not {owner!r}")
+    if not owner and category.needs_owner:
+        raise InputError("owner is blank, and GITHUB_REPOSITORY_OWNER is not set")
+    return owner
+
+
 def read_settings(environ: Mapping[str, str]) -> Settings:
     """Check every input before any item is read."""
     category = resolve_category(environ.get("SPLIT_VALIDATE", ""))
     ignore_case = resolve_ignore_case(environ.get("SPLIT_IGNORE_CASE", ""), category)
-    return Settings(category, ignore_case)
+    owner = resolve_owner(
+        environ.get("SPLIT_OWNER", ""),
+        environ.get("GITHUB_REPOSITORY_OWNER", ""),
+        category,
+    )
+    server_url = environ.get("GITHUB_SERVER_URL", "").strip() or DEFAULT_SERVER_URL
+    return Settings(category, ignore_case, Context(owner, server_url))
