@@ -6,12 +6,30 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import ClassVar
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import Any, ClassVar
+
+from ..graphql import Lookup
+
+# Why verification fails when GitHub returns nothing: a private object
+# the token cannot see looks exactly like one that does not exist.
+NOT_FOUND = "not found on GitHub, or not visible to the token"
 
 
 class InvalidItem(Exception):
     """Why a token is not an item of the selected category."""
+
+
+def check_place(expected: str, actual: str) -> None:
+    """Refuse an item GitHub now keeps elsewhere.
+
+    GitHub follows a renamed or transferred repository, and a moved
+    issue, to where it lives now. The list still names the old place,
+    which may belong to another owner.
+    """
+    if actual.casefold() != expected.casefold():
+        raise InvalidItem(f"has moved to {actual}")
 
 
 @dataclass(frozen=True)
@@ -39,6 +57,8 @@ class Item:
     repo: str = ""
     number: int = 0
     login: str = ""
+    # What GitHub reported about the item, once verified.
+    facts: dict[str, object] = field(default_factory=dict, hash=False)
 
     @property
     def details(self) -> dict[str, object]:
@@ -49,7 +69,8 @@ class Item:
             "number": self.number,
             "login": self.login,
         }
-        return {"item": self.text, **{k: v for k, v in located.items() if v}}
+        placed = {key: value for key, value in located.items() if value}
+        return {"item": self.text, **placed, **self.facts}
 
 
 class Category(ABC):
@@ -68,3 +89,19 @@ class Category(ABC):
     @abstractmethod
     def parse(self, token: str, context: Context) -> Item:
         """Return the item a token names, or raise InvalidItem saying why not."""
+
+
+class Verifiable(Category):
+    """A category whose items GitHub can confirm, for the verify input."""
+
+    @abstractmethod
+    def lookup(self, item: Item) -> Lookup:
+        """Where on GitHub the item should be, and what to read there."""
+
+    @abstractmethod
+    def check(self, item: Item, node: Mapping[str, Any]) -> dict[str, object]:
+        """Confirm GitHub's object is the item, returning facts for details.
+
+        Raise InvalidItem when GitHub holds something else there, such
+        as a pull request where the list named an issue.
+        """

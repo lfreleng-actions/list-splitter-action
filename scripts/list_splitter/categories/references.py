@@ -11,12 +11,14 @@ URL path segment of their kind, and publish each as owner/repo#N.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import Any, ClassVar
 
+from ..graphql import Argument, Lookup, Step, field_of
 from .accounts import LOGIN
-from .base import Category, Context, InvalidItem, Item
-from .repositories import check_repository_name
+from .base import NOT_FOUND, Context, InvalidItem, Item, Verifiable, check_place
+from .repositories import check_repository_name, repository_step
 
 NUMBER = re.compile(r"[0-9]{1,10}")
 # Verification sends a number as a GraphQL Int, and one value outside
@@ -29,6 +31,8 @@ REFERENCE = re.compile(
 )
 # The URL path segment naming each kind of numbered item.
 KINDS = {"issues": "an issue", "pull": "a pull request"}
+# The GraphQL type of each kind, as issueOrPullRequest returns it.
+TYPENAMES = {"Issue": "an issue", "PullRequest": "a pull request"}
 
 
 @dataclass(frozen=True)
@@ -69,7 +73,7 @@ def parse_number(text: str, noun: str) -> int:
     return int(text)
 
 
-class NumberedReference(Category):
+class NumberedReference(Verifiable):
     """An issue or pull request in a repository of the owner."""
 
     ignore_case = True
@@ -79,6 +83,10 @@ class NumberedReference(Category):
     kind: ClassVar[str]
     # The kind's name, for messages.
     noun: ClassVar[str]
+    # The GraphQL type of the kind, a key of TYPENAMES.
+    typename: ClassVar[str]
+    # What verification reads of an item of the kind, beyond its type.
+    fields: ClassVar[str] = "number url state repository { nameWithOwner }"
 
     def parse(self, token: str, context: Context) -> Item:
         """Accept every spelling of a reference, publishing owner/repo#N."""
@@ -102,6 +110,37 @@ class NumberedReference(Category):
             number=number,
         )
 
+    def lookup(self, item: Item) -> Lookup:
+        """The numbered item inside its repository, whatever its type.
+
+        Issues and pull requests share one sequence of numbers, and
+        issueOrPullRequest returns either, so a number of the other
+        kind earns its own message rather than a bare not found.
+        """
+        held_in = f"repository {item.owner}/{item.repo} {NOT_FOUND}"
+        number = (Argument("number", "Int!", item.number),)
+        path = (
+            repository_step(item.owner, item.repo, held_in),
+            Step("issueOrPullRequest", number, NOT_FOUND),
+        )
+        return Lookup(path, f"__typename ... on {self.typename} {{ {self.fields} }}")
+
+    def check(self, item: Item, node: Mapping[str, Any]) -> dict[str, object]:
+        """Confirm the kind and the place; report the state in lower case."""
+        typename = field_of(node, "__typename", str)
+        if typename != self.typename:
+            found = TYPENAMES.get(typename, typename)
+            raise InvalidItem(f"is {found}, not {TYPENAMES[self.typename]}")
+        holder = field_of(node, "repository", dict)
+        place = (
+            f"{field_of(holder, 'nameWithOwner', str)}#{field_of(node, 'number', int)}"
+        )
+        check_place(item.text, place)
+        return {
+            "html_url": field_of(node, "url", str),
+            "state": field_of(node, "state", str).lower(),
+        }
+
 
 class Issue(NumberedReference):
     """An issue: repo#N, owner/repo#N, repo/issues/N or its URL."""
@@ -109,6 +148,7 @@ class Issue(NumberedReference):
     names = ("issue",)
     kind = "issues"
     noun = "issue"
+    typename = "Issue"
 
 
 class PullRequest(NumberedReference):
@@ -117,3 +157,11 @@ class PullRequest(NumberedReference):
     names = ("pull-request",)
     kind = "pull"
     noun = "pull request"
+    typename = "PullRequest"
+    fields = f"{NumberedReference.fields} isDraft"
+
+    def check(self, item: Item, node: Mapping[str, Any]) -> dict[str, object]:
+        """As for any numbered item, adding whether it is a draft."""
+        facts = super().check(item, node)
+        facts["draft"] = field_of(node, "isDraft", bool)
+        return facts

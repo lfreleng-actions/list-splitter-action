@@ -132,18 +132,41 @@ the operator typed, and `details` carries its parts for a matrix:
 A matrix over `fromJSON(steps.pulls.outputs.details)` then reads
 `matrix.repo` and `matrix.number` for each pull request.
 
+Confirm named repositories exist before scanning them, reading each
+one's default branch and flags in the same step. One run checks the
+whole list in concurrent GraphQL queries, in place of one REST call
+per repository:
+
+```yaml
+      - name: "Verify the named repositories"
+        id: named
+        uses: lfreleng-actions/list-splitter-action@<commit-sha>  # vX.Y.Z
+        with:
+          list: ${{ inputs.repo }}
+          validate: "repository"
+          owner: ${{ inputs.org }}
+          verify: "true"
+          token: ${{ secrets.ORG_READ_TOKEN }}
+```
+
+Each `details` entry then carries `default_branch`, `archived`,
+`fork`, `is_template`, `disabled`, `private` and `visibility`, named as
+the REST API names them.
+
 <!-- markdownlint-enable MD046 -->
 
 ## Inputs
 
 <!-- markdownlint-disable MD013 -->
 
-| Name        | Required | Default | Description                                                                                       |
-| ----------- | -------- | ------- | ------------------------------------------------------------------------------------------------- |
-| list        | False    | `""`    | Items separated by commas, spaces, tabs or newlines; blank gives no items                         |
-| validate    | False    | `none`  | Item check, from the [validate modes](#validate-modes) below                                      |
-| ignore-case | False    | `auto`  | Treat items differing in case alone as repeats: `auto`, `true` or `false`                         |
-| owner       | False    | `""`    | Owner the repositories, issues and pull requests belong to; blank uses the workflow's owner       |
+| Name        | Required | Default               | Description                                                                                 |
+| ----------- | -------- | --------------------- | ------------------------------------------------------------------------------------------- |
+| list        | False    | `""`                  | Items separated by commas, spaces, tabs or newlines; blank gives no items                   |
+| validate    | False    | `none`                | Item check, from the [validate modes](#validate-modes) below                                |
+| ignore-case | False    | `auto`                | Treat items differing in case alone as repeats: `auto`, `true` or `false`                   |
+| owner       | False    | `""`                  | Owner the repositories, issues and pull requests belong to; blank uses the workflow's owner |
+| verify      | False    | `false`               | Confirm each item exists on GitHub as its mode describes: `true` or `false`                 |
+| token       | False    | `${{ github.token }}` | Token for `verify`, able to read the items; read for nothing else                           |
 
 <!-- markdownlint-enable MD013 -->
 
@@ -192,21 +215,63 @@ mode:
 
 <!-- markdownlint-disable MD013 -->
 
-| Mode                      | Fields                     |
-| ------------------------- | -------------------------- |
-| `none`                    | None beyond `item`         |
-| `repository`              | `owner`, `repo`            |
-| `issue`, `pull-request`   | `owner`, `repo`, `number`  |
-| `organisation`, `user`    | `login`                    |
+| Mode                   | Fields                    | With `verify`                                                                                        |
+| ---------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `none`                 | None beyond `item`        | Not available                                                                                        |
+| `repository`           | `owner`, `repo`           | `html_url`, `default_branch`, `archived`, `fork`, `is_template`, `disabled`, `private`, `visibility` |
+| `issue`                | `owner`, `repo`, `number` | `html_url`, `state`                                                                                  |
+| `pull-request`         | `owner`, `repo`, `number` | `html_url`, `state`, `draft`                                                                         |
+| `organisation`, `user` | `login`                   | `html_url`                                                                                           |
 
 <!-- markdownlint-enable MD013 -->
+
+`default_branch` is `null` for an empty repository. States read
+`open` or `closed`, and `merged` for a merged pull request.
+
+## Verification
+
+With `verify: true` the action confirms every item on GitHub after the
+offline checks, and refuses an item in these cases:
+
+- GitHub holds nothing there, or nothing the token can see: a private
+  repository the token cannot read looks the same as a missing one.
+- The object is of the other kind: a pull request where the list named
+  an issue, or a user where it named an organisation.
+- The object has moved. GitHub follows a renamed or transferred
+  repository, and a transferred issue, to its new place; the action
+  names that place instead of acting on it unannounced, since it may
+  belong to another owner.
+
+The action checks every item that passed the offline checks, even
+when others failed, so one run reports both kinds of mistake. When
+GitHub cannot answer at all, the run fails with an error saying so,
+after any offline refusals, and blames no item for it.
+
+Verification reads through GitHub's GraphQL API at
+`GITHUB_GRAPHQL_URL`, which GitHub Enterprise Server runners set to
+their own server. A short list costs one round trip: lookups travel as
+aliased fields, shared evenly among queries of 5 to 50 lookups that
+run eight at a time, each charged one point of the GraphQL rate limit.
+Measured against `api.github.com`, 50 repositories verify in under a
+second and 120 in about one and a half. List values travel as query
+variables, never in the query text, and the action follows no
+redirect, so the token reaches the endpoint alone.
+
+The default `github.token` reads public objects and the repository
+running the workflow. To verify private repositories elsewhere in an
+organisation, pass a token that can read them, such as an App token
+from `actions/create-github-app-token` scoped to those repositories.
+The step receives the token input whether or not `verify` is on, as
+it does every input; the action reads it to verify and for nothing
+else.
 
 ## Implementation Details
 
 The action runs `scripts/split_list.py` with the runner's `python3`;
-the `scripts/list_splitter` package beside it holds the implementation.
-It makes no network calls and needs no token, so a trusted job can run
-it before minting any credential.
+the `scripts/list_splitter` package beside it holds the implementation
+and needs nothing beyond the standard library. Without `verify` it
+makes no network calls and needs no token, so a trusted job can run it
+before minting any credential.
 
 - **Splitting.** Any run of commas and whitespace separates two items.
   Input holding separators alone yields no items, as a blank input
@@ -244,8 +309,12 @@ Each validate mode is a `Category` in the
 modes, stating what a valid item looks like, the form it publishes,
 and whether GitHub compares items without regard to case. A new mode
 is one more class, added to `CATEGORIES` in the package's
-`__init__.py`. URL references follow `GITHUB_SERVER_URL`, so on GitHub
-Enterprise Server they take that server's address.
+`__init__.py`. A mode GitHub can confirm subclasses `Verifiable`
+instead, adding where its object lives and how to check what GitHub
+holds there; `scripts/list_splitter/graphql.py` batches, sends and
+reads every lookup, whatever the mode. URL references follow
+`GITHUB_SERVER_URL`, so on GitHub Enterprise Server they take that
+server's address.
 
 ## Notes
 

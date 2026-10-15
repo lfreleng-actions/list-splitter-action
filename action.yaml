@@ -6,8 +6,9 @@
 # workflow_dispatch input) into items, removes repeats, optionally
 # validates each item as a repository, issue, pull request,
 # organisation or user, and publishes the result as JSON, CSV, one
-# item per line, and a count. Needs python3 on the runner; it makes no
-# network calls and takes no token.
+# item per line, and a count. Needs python3 on the runner. It makes no
+# network calls unless verify is true, when it confirms every item
+# on GitHub in batched GraphQL queries using the token input.
 name: "✂️ List Splitter"
 # yamllint disable-line rule:line-length
 description: "Splits comma, space or newline separated lists into validated JSON and CSV"
@@ -31,6 +32,15 @@ inputs:
     description: "Owner that repositories, issues and pull requests belong to; blank uses the workflow's owner"
     required: false
     default: ""
+  verify:
+    # yamllint disable-line rule:line-length
+    description: "Confirm each item exists on GitHub as its mode describes: true or false"
+    required: false
+    default: "false"
+  token:
+    description: "Token for verify; it needs read access to the items"
+    required: false
+    default: ${{ github.token }}
 
 outputs:
   json:
@@ -63,6 +73,8 @@ runs:
         SPLIT_VALIDATE: ${{ inputs.validate }}
         SPLIT_IGNORE_CASE: ${{ inputs.ignore-case }}
         SPLIT_OWNER: ${{ inputs.owner }}
+        SPLIT_VERIFY: ${{ inputs.verify }}
+        SPLIT_TOKEN: ${{ inputs.token }}
       run: |
         # Split list
         python3 -B "${GITHUB_ACTION_PATH}/scripts/split_list.py"

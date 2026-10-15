@@ -8,42 +8,20 @@ from __future__ import annotations
 import io
 import json
 import sys
-import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+from action_harness import (  # noqa: E402
+    WORKFLOW_OWNER,
+    ActionTestCase,
+    OutputFileTestCase,
+    read_outputs,
+)
 from list_splitter import action, outputs  # noqa: E402
 from list_splitter.categories.base import Item  # noqa: E402
-
-# The runner sets GITHUB_REPOSITORY_OWNER in every job.
-WORKFLOW_OWNER = "lfreleng-actions"
-
-
-def read_outputs(path: Path) -> dict[str, str]:
-    """Parse a heredoc-form output file the way the runner does."""
-    found: dict[str, str] = {}
-    lines = path.read_text(encoding="utf-8").split("\n")
-    index = 0
-    while index < len(lines) and lines[index]:
-        name, _, delimiter = lines[index].partition("<<")
-        end = lines.index(delimiter, index + 1)
-        found[name] = "\n".join(lines[index + 1 : end])
-        index = end + 1
-    return found
-
-
-class OutputFileTestCase(unittest.TestCase):
-    """Provides a scratch output file for each test."""
-
-    def setUp(self) -> None:
-        """Create an empty output file that is removed afterwards."""
-        holder = tempfile.TemporaryDirectory()
-        self.addCleanup(holder.cleanup)
-        self.path = Path(holder.name, "output")
-        self.path.touch()
 
 
 class OutputsTest(OutputFileTestCase):
@@ -106,35 +84,8 @@ class OutputsTest(OutputFileTestCase):
         self.assertEqual(outputs.escape_command("50%\r\n::x"), "50%25%0D%0A::x")
 
 
-class MainTest(OutputFileTestCase):
+class MainTest(ActionTestCase):
     """End to end: environment in, output file and log out."""
-
-    def setUp(self) -> None:
-        """Provide the output file, and the variables the runner sets."""
-        super().setUp()
-        self.runner = {
-            "GITHUB_OUTPUT": str(self.path),
-            "GITHUB_REPOSITORY_OWNER": WORKFLOW_OWNER,
-        }
-
-    def run_main(self, **inputs: str) -> tuple[int, str]:
-        """Run main with the given inputs, returning its status and log."""
-        environ = dict(self.runner)
-        environ.update(
-            {f"SPLIT_{name.upper()}": value for name, value in inputs.items()}
-        )
-        log = io.StringIO()
-        with redirect_stdout(log):
-            status = action.main(environ)
-        return status, log.getvalue()
-
-    def assertRefusals(self, log: str, refusals: list[tuple[str, str]]) -> None:
-        """The log names exactly these tokens and reasons, in this order."""
-        self.assertEqual(
-            log.splitlines(),
-            [f"::error::Invalid item '{token}': {why}" for token, why in refusals],
-        )
-        self.assertEqual(self.path.read_text(encoding="utf-8"), "")
 
     def test_repository_list(self) -> None:
         """Names split, collapse ignoring case, and keep their order."""
