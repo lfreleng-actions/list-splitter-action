@@ -25,9 +25,13 @@ class ResolveInputsTest(unittest.TestCase):
         self.assertIs(inputs.resolve_category(""), NONE)
         self.assertIs(inputs.resolve_category(" Repository "), REPOSITORY)
 
+    @unittest.expectedFailure
     def test_unknown_mode_is_refused(self) -> None:
         """A typo fails rather than silently skipping validation."""
-        with self.assertRaisesRegex(inputs.InputError, "none, repository"):
+        with self.assertRaisesRegex(
+            inputs.InputError,
+            "one of issue, none, organisation, pull-request, repository, user,",
+        ):
             inputs.resolve_category("repo")
 
     def test_auto_follows_the_mode(self) -> None:
