@@ -124,7 +124,8 @@ Read glob patterns into a shell array, without validation:
 
 ## Implementation Details
 
-The action runs `scripts/split_list.py` with the runner's `python3`.
+The action runs `scripts/split_list.py` with the runner's `python3`;
+the `scripts/list_splitter` package beside it holds the implementation.
 It makes no network calls and needs no token, so a trusted job can run
 it before minting any credential.
 
@@ -148,9 +149,11 @@ it before minting any credential.
   and the log line naming the items never lets an item open a line,
   where the runner would read it as a workflow command.
 
-New validation modes extend the `VALIDATORS` table in the script; a
-mode GitHub compares without regard to case joins
-`CASE_INSENSITIVE_MODES` too.
+Each validate mode is a `Category` in the
+`scripts/list_splitter/categories` package, stating what a valid item
+looks like and whether GitHub compares items without regard to case. A
+new mode is one more class, added to `CATEGORIES` in the package's
+`__init__.py`.
 
 ## Notes
 
