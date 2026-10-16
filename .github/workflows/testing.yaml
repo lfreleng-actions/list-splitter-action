@@ -5,6 +5,8 @@
 # Runs the unit tests, then exercises the action from this repository
 # through '$/': each output format, validation failure, and a matrix
 # built from the json output, which is how most callers consume it.
+# The verification job looks up public objects that will not go away,
+# with the job's own token, so it needs api.github.com and nothing more.
 name: "Test GitHub Action 🧪"
 
 # yamllint disable-line rule:truthy
@@ -102,6 +104,9 @@ jobs:
           LINES: ${{ steps.repositories.outputs.lines }}
           COUNT: ${{ steps.repositories.outputs.count }}
           FIRST: ${{ fromJSON(steps.repositories.outputs.json)[0] }}
+          REPOSITORIES: ${{ steps.repositories.outputs.repositories }}
+          # yamllint disable-line rule:line-length
+          OWNER: ${{ fromJSON(steps.repositories.outputs.details)[1].owner }}
         run: |
           # Check the repository list outputs
           set -euo pipefail
@@ -110,6 +115,53 @@ jobs:
           [ "$LINES" = $'repo-b\nRepo-A' ]
           [ "$COUNT" = '2' ]
           [ "$FIRST" = 'repo-b' ]
+          [ "$REPOSITORIES" = 'repo-b,Repo-A' ]
+          [ "$OWNER" = "$GITHUB_REPOSITORY_OWNER" ]
+
+      - name: "Split a pull request list"
+        id: pulls
+        uses: $/
+        with:
+          list: |
+            repo-a#12, octo-org/repo-a/pull/12
+            https://github.com/octo-org/repo-b/pull/3/
+          validate: "pull-request"
+          owner: "octo-org"
+
+      - name: "Check the pull request list outputs"
+        shell: bash
+        env:
+          JSON: ${{ steps.pulls.outputs.json }}
+          REPOSITORIES: ${{ steps.pulls.outputs.repositories }}
+          NUMBER: ${{ fromJSON(steps.pulls.outputs.details)[1].number }}
+        run: |
+          # Check the pull request list outputs
+          set -euo pipefail
+          [ "$JSON" = '["octo-org/repo-a#12","octo-org/repo-b#3"]' ]
+          [ "$REPOSITORIES" = 'repo-a,repo-b' ]
+          [ "$NUMBER" = '3' ]
+
+      - name: "Split an organisation list"
+        id: organisations
+        uses: $/
+        with:
+          list: "lfreleng-actions LFRELENG-ACTIONS, octo-org"
+          validate: "organisation"
+
+      - name: "Check the organisation list outputs"
+        shell: bash
+        env:
+          JSON: ${{ steps.organisations.outputs.json }}
+          REPOSITORIES: ${{ steps.organisations.outputs.repositories }}
+          DETAILS: ${{ steps.organisations.outputs.details }}
+        run: |
+          # Check the organisation list outputs
+          set -euo pipefail
+          [ "$JSON" = '["lfreleng-actions","octo-org"]' ]
+          [ "$REPOSITORIES" = '' ]
+          expected='[{"item":"lfreleng-actions","login":"lfreleng-actions"},'
+          expected+='{"item":"octo-org","login":"octo-org"}]'
+          [ "$DETAILS" = "$expected" ]
 
       - name: "Split a glob list without validation"
         id: globs
@@ -162,6 +214,143 @@ jobs:
         run: |
           # Error if the invalid list did NOT fail
           echo "Error: an invalid repository list was accepted ❌"
+          exit 1
+
+      - name: "Split an issue list naming another owner [expected failure]"
+        id: foreign
+        continue-on-error: true
+        uses: $/
+        with:
+          list: "repo#1 other-org/repo#2"
+          validate: "issue"
+          owner: "octo-org"
+
+      - name: "Error if the foreign issue list did NOT fail"
+        if: steps.foreign.outcome != 'failure'
+        shell: bash
+        run: |
+          # Error if the foreign issue list did NOT fail
+          echo "Error: an issue in another owner was accepted ❌"
+          exit 1
+
+  verify-tests:
+    name: "Verification tests"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      # yamllint disable-line rule:line-length
+      - uses: lfreleng-actions/harden-runner-block-action@a32eb064a1188f6b0f15d2c0c0381efe54b0dd22  # v0.12.2
+        with:
+          config: '@93962991c9e4cc04d77d81e619475c868a226277'  # v0.17.0
+
+      - name: 'Harden runner (block)'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
+        with:
+          egress-policy: 'block'
+          allowed-endpoints: >
+            ${{ env.CONNECTION_ALLOW_LIST }}
+
+      - name: "Checkout repository"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: "Verify a repository list"
+        id: repositories
+        uses: $/
+        with:
+          list: "list-splitter-action, .github"
+          validate: "repository"
+          owner: "lfreleng-actions"
+          verify: "true"
+
+      - name: "Verify a pull request list"
+        id: pulls
+        uses: $/
+        with:
+          # yamllint disable-line rule:line-length
+          list: "https://github.com/lfreleng-actions/list-splitter-action/pull/3"
+          validate: "pull-request"
+          owner: "lfreleng-actions"
+          verify: "true"
+
+      - name: "Verify an issue list"
+        id: issues
+        uses: $/
+        with:
+          list: ".github#179"
+          validate: "issue"
+          owner: "lfreleng-actions"
+          verify: "true"
+
+      - name: "Verify an organisation list"
+        id: organisations
+        uses: $/
+        with:
+          list: "lfreleng-actions"
+          validate: "organisation"
+          verify: "true"
+
+      - name: "Verify a user list"
+        id: users
+        uses: $/
+        with:
+          list: "octocat"
+          validate: "user"
+          verify: "true"
+
+      - name: "Check what verification found"
+        shell: bash
+        env:
+          # yamllint disable rule:line-length
+          REPOSITORY: ${{ fromJSON(steps.repositories.outputs.details)[0].html_url }}
+          BRANCH: ${{ fromJSON(steps.repositories.outputs.details)[1].default_branch }}
+          PULL_STATE: ${{ fromJSON(steps.pulls.outputs.details)[0].state }}
+          ISSUE: ${{ fromJSON(steps.issues.outputs.details)[0].html_url }}
+          ORGANISATION: ${{ fromJSON(steps.organisations.outputs.details)[0].html_url }}
+          USER: ${{ fromJSON(steps.users.outputs.details)[0].html_url }}
+          # yamllint enable rule:line-length
+        run: |
+          # Check what verification found
+          set -euo pipefail
+          base='https://github.com'
+          [ "$REPOSITORY" = "$base/lfreleng-actions/list-splitter-action" ]
+          [ "$BRANCH" = 'main' ]
+          [ "$PULL_STATE" = 'merged' ]
+          [ "$ISSUE" = "$base/lfreleng-actions/.github/issues/179" ]
+          [ "$ORGANISATION" = "$base/lfreleng-actions" ]
+          [ "$USER" = "$base/octocat" ]
+
+      - name: "Verify a pull request as an issue [expected failure]"
+        id: wrong-kind
+        continue-on-error: true
+        uses: $/
+        with:
+          list: "list-splitter-action#3"
+          validate: "issue"
+          owner: "lfreleng-actions"
+          verify: "true"
+
+      - name: "Verify a user as an organisation [expected failure]"
+        id: wrong-type
+        continue-on-error: true
+        uses: $/
+        with:
+          list: "octocat"
+          validate: "organisation"
+          verify: "true"
+
+      - name: "Error if a mismatched item did NOT fail"
+        if: >-
+          steps.wrong-kind.outcome != 'failure'
+          || steps.wrong-type.outcome != 'failure'
+        shell: bash
+        run: |
+          # Error if a mismatched item did NOT fail
+          echo "Error: verification accepted a mismatched item ❌"
           exit 1
 
   matrix:
