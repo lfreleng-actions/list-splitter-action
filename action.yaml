@@ -6,9 +6,12 @@
 # workflow_dispatch input) into items, removes repeats, optionally
 # validates each item as a repository, issue, pull request,
 # organisation or user, and publishes the result as JSON, CSV, one
-# item per line, and a count. Needs python3 on the runner. It makes no
-# network calls unless verify is true, when it confirms every item
-# on GitHub in batched GraphQL queries using the token input.
+# item per line, and a count. It runs on an interpreter it sets up
+# itself, not the caller's python3, and leaves the caller's PATH as
+# it was. The splitter makes no network calls unless verify is true,
+# when it confirms every item on GitHub in batched GraphQL queries
+# using the token input. Setting up the interpreter downloads Python
+# 3.12 on a runner whose tool cache lacks it, whatever verify says.
 name: "✂️ List Splitter"
 # yamllint disable-line rule:line-length
 description: "Splits comma, space or newline separated lists into validated JSON and CSV"
@@ -65,10 +68,21 @@ outputs:
 runs:
   using: "composite"
   steps:
+    # update-environment off keeps this interpreter out of the caller's
+    # PATH; the next step starts it by the path this step outputs.
+    - name: "Set up Python"
+      id: setup-python
+      # yamllint disable-line rule:line-length
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+      with:
+        python-version: "3.12"
+        update-environment: false
+
     - name: "Split list"
       id: split
       shell: bash
       env:
+        PYTHON: ${{ steps.setup-python.outputs.python-path }}
         SPLIT_LIST: ${{ inputs.list }}
         SPLIT_VALIDATE: ${{ inputs.validate }}
         SPLIT_IGNORE_CASE: ${{ inputs.ignore-case }}
@@ -77,4 +91,4 @@ runs:
         SPLIT_TOKEN: ${{ inputs.token }}
       run: |
         # Split list
-        python3 -B "${GITHUB_ACTION_PATH}/scripts/split_list.py"
+        "$PYTHON" -I -B "${GITHUB_ACTION_PATH}/scripts/split_list.py"
