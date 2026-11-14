@@ -267,11 +267,19 @@ else.
 
 ## Implementation Details
 
-The action runs `scripts/split_list.py` with the runner's `python3`;
-the `scripts/list_splitter` package beside it holds the implementation
-and needs nothing beyond the standard library. Without `verify` it
-makes no network calls and needs no token, so a trusted job can run it
-before minting any credential.
+The action runs `scripts/split_list.py` in isolated mode (`-I`) on a
+Python 3.12 interpreter that a commit-pinned `actions/setup-python`
+step provides, so the caller's `PATH` and `PYTHON*` settings cannot
+choose or alter the interpreter. That step runs with
+`update-environment: false`, leaving the caller's `PATH` as it was.
+The `scripts/list_splitter` package beside it holds the implementation
+and needs nothing beyond the standard library. Without `verify` the
+splitter makes no network calls and needs no token, so a trusted job
+can run it before minting any credential. Setting up the interpreter
+is separate: on a runner whose tool cache lacks Python 3.12, such as
+a self-hosted one, `actions/setup-python` downloads it, whatever
+`verify` says. A runner with blocked egress needs Python 3.12 in its
+tool cache.
 
 - **Splitting.** Any run of commas and whitespace separates two items.
   Input holding separators alone yields no items, as a blank input
@@ -318,8 +326,9 @@ server's address.
 
 ## Notes
 
-The action needs `python3` on the runner: GitHub-hosted Linux and macOS
-images provide it. Run the tests locally with:
+The action sets up its own Python with `actions/setup-python`;
+GitHub-hosted images hold Python 3.12 in their tool cache, so it
+downloads nothing there. Run the tests locally with:
 
 ```bash
 python3 -B -m unittest discover -s tests
