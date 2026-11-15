@@ -4,10 +4,11 @@
 # Tool configuration only; this repository is not a Python package.
 
 [tool.basedpyright]
-# action.yaml runs the script on Python 3.12 from actions/setup-python.
-# 3.10 stays the floor so the suite still runs on the distro python3
-# of ubuntu-22.04, the oldest GitHub-hosted Ubuntu image.
-pythonVersion = "3.10"
+# action.yaml runs the script on its own Python 3.12, which it sets up
+# with actions/setup-python rather than taking the runner's python3.
+# Checking against 3.11, the organisation's minimum, keeps the code
+# free of features newer than any interpreter it supports.
+pythonVersion = "3.11"
 pythonPlatform = "All"
 typeCheckingMode = "standard"
 include = ["scripts", "tests"]
